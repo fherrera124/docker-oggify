@@ -2,14 +2,14 @@ extern crate env_logger;
 extern crate librespot_audio;
 extern crate librespot_core;
 extern crate librespot_metadata;
-extern crate sanitize_filename;
 #[macro_use]
 extern crate log;
 extern crate regex;
+extern crate sanitize_filename;
 extern crate scoped_threadpool;
 extern crate tokio_core;
 
-use std::env;
+use std::{env, panic};
 use std::io::Write;
 use std::io::{self, BufRead, Read, Result};
 use std::path::Path;
@@ -18,6 +18,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use env_logger::{Builder, Env};
+use indexmap::map::IndexMap;
 use librespot_audio::{AudioDecrypt, AudioFile};
 use librespot_core::authentication::Credentials;
 use librespot_core::config::SessionConfig;
@@ -26,7 +27,6 @@ use librespot_core::spotify_id::SpotifyId;
 use librespot_metadata::{Album, Artist, Episode, FileFormat, Metadata, Playlist, Show, Track};
 use regex::Regex;
 use scoped_threadpool::Pool;
-use std::collections::HashMap;
 use tokio_core::reactor::Core;
 
 fn main() {
@@ -53,12 +53,20 @@ fn main() {
 
     let re = Regex::new(r"(playlist|track|album|episode|show)[/:]([a-zA-Z0-9]+)").unwrap();
 
-    let mut ids = HashMap::new();
+    // As opposed to HashMaps, IndexMaps preserve insertion order.
+    let mut ids = IndexMap::new();
 
     for line in io::stdin().lock().lines() {
         match line {
             Ok(line) => {
-                let spotify_match = re.captures(&line).unwrap();
+                if line.trim() == "done" {
+                    break;
+                }
+                let spotify_captures = re.captures(&line.trim());
+                if spotify_captures.is_none() {
+                    continue;
+                }
+                let spotify_match = spotify_captures.unwrap();
                 let spotify_type = spotify_match.get(1).unwrap().as_str();
                 let spotify_id =
                     SpotifyId::from_base62(spotify_match.get(2).unwrap().as_str()).unwrap();
@@ -71,17 +79,24 @@ fn main() {
                         }
                     }
 
-                    "show" => {
-                        let show = core.run(Show::get(&session, spotify_id)).unwrap();
-                        for episode_id in show.episodes {
-                            ids.insert(episode_id, "episode");
-                        }
-                    }
-
                     "album" => {
                         let album = core.run(Album::get(&session, spotify_id)).unwrap();
                         for track_id in album.tracks {
                             ids.insert(track_id, "track");
+                        }
+                    }
+
+                    "show" => {
+                        let show = core.run(Show::get(&session, spotify_id)).unwrap();
+                        let mut episodes = IndexMap::new();
+                        for episode_id in show.episodes {
+                            episodes.insert(episode_id, "episode");
+                        }
+                        // Since Spotify returns the IDs of episodes in a show in reverse order,
+                        // we have to reverse it ourselves again.
+                        episodes.reverse();
+                        for (key, value) in episodes.iter() {
+                            ids.insert(*key, value);
                         }
                     }
 
@@ -93,7 +108,7 @@ fn main() {
                         ids.insert(spotify_id, "episode");
                     }
 
-                    _ => warn!("I dont know you"),
+                    _ => warn!("Unknown link type."),
                 };
             }
 
@@ -261,7 +276,7 @@ fn main() {
                         .unwrap();
                     let mut buffer = Vec::new();
                     let mut read_all: Result<usize> = Ok(0);
-                    let fname = format!("{} - {}.ogg", show.name, episode.name);
+                    let fname = format!("{} - {}.ogg", show.publisher, episode.name);
                     if Path::new(&fname).exists() {
                         info!("File {} already exists.", fname);
                     } else {
