@@ -2,7 +2,6 @@
 extern crate log;
 
 use std::io::{self, BufRead};
-use std::path::Path;
 use std::{env, panic};
 
 use env_logger::{Builder, Env};
@@ -127,34 +126,22 @@ fn main() {
                                 .name
                         })
                         .collect();
-                    print_file_formats(&track.files);
-                    let file_id = get_usable_file_id(&track.files);
-                    let fname = sanitize_filename::sanitize(format!(
-                        "{} - {}.ogg",
-                        artists_strs.join(", "),
-                        track.name
-                    ));
-
-                    if Path::new(&fname).exists() {
-                        info!("File {} already exists.", fname);
-                    } else {
-                        write_to_disk(
-                            &mut core,
-                            &session,
-                            &args[..],
-                            track.id,
-                            *file_id,
-                            &fmtid,
-                            &track.name,
-                            |core| {
-                                let album = core
-                                    .run(Album::get(&session, track.album))
-                                    .expect("Cannot get album metadata");
-                                album.name
-                            },
-                            &artists_strs,
-                        );
-                    }
+                    write_to_disk(
+                        &mut core,
+                        &session,
+                        &args[..],
+                        track.id,
+                        &track.files,
+                        &fmtid,
+                        &track.name,
+                        |core| {
+                            let album = core
+                                .run(Album::get(&session, track.album))
+                                .expect("Cannot get album metadata");
+                            album.name
+                        },
+                        &artists_strs,
+                    );
                 }
             }
 
@@ -166,25 +153,18 @@ fn main() {
                     let show = core
                         .run(Show::get(&session, episode.show))
                         .expect("Cannot get show");
-                    print_file_formats(&episode.files);
-                    let file_id = get_usable_file_id(&episode.files);
-                    let fname = format!("{} - {}.ogg", show.publisher, episode.name);
-                    if Path::new(&fname).exists() {
-                        info!("File {} already exists.", fname);
-                    } else {
-                        let sname = &show.name;
-                        write_to_disk(
-                            &mut core,
-                            &session,
-                            &args[..],
-                            episode.id,
-                            *file_id,
-                            &fmtid,
-                            &episode.name,
-                            |_| sname,
-                            &[show.publisher],
-                        );
-                    }
+                    let sname = &show.name;
+                    write_to_disk(
+                        &mut core,
+                        &session,
+                        &args[..],
+                        episode.id,
+                        &episode.files,
+                        &fmtid,
+                        &episode.name,
+                        |_| sname,
+                        &[show.publisher],
+                    );
                 }
             }
         }

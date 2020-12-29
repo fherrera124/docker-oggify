@@ -65,7 +65,7 @@ pub fn write_to_disk<'a, 'c, GG, GR>(
     session: &'c Session,
     args: &'a [String],
     track_id: SpotifyId,
-    file_id: FileId,
+    files: &Files,
     fmtid: &'a str,
     element: &'a str,
     group_getter: GG,
@@ -74,6 +74,13 @@ pub fn write_to_disk<'a, 'c, GG, GR>(
     GG: FnOnce(&'c mut Core) -> GR,
     GR: AsRef<str>,
 {
+    let fname = sanitize_filename::sanitize(format!("{} - {}.ogg", origins.join(", "), element));
+    if Path::new(&fname).exists() {
+        info!("File {} already exists.", fname);
+        return;
+    }
+    print_file_formats(files);
+    let file_id = *get_usable_file_id(files);
     let key = core
         .run(session.audio_key().request(track_id, file_id))
         .expect("Cannot get audio key");
@@ -88,7 +95,6 @@ pub fn write_to_disk<'a, 'c, GG, GR>(
     AudioDecrypt::new(key, &buffer[..])
         .read_to_end(&mut decrypted_buffer)
         .expect("Cannot decrypt stream");
-    let fname = sanitize_filename::sanitize(format!("{} - {}.ogg", origins.join(", "), element));
     let decrypted_buffer = &decrypted_buffer[0xa7..];
     if args.len() == 3 {
         if Path::new(&fname).exists() {
