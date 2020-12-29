@@ -5,6 +5,7 @@ use std::io::{self, BufRead};
 use std::io::{Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::rc::Rc;
 
 use indexmap::map::IndexMap;
 use librespot_audio::{AudioDecrypt, AudioFile};
@@ -15,11 +16,10 @@ use regex::Regex;
 use tokio_core::reactor::Core;
 
 enum IndexedTy {
-    Track,
-    Episode,
+    Track { album_name: Option<Rc<String>> },
+    Episode { show: Option<Rc<Show>> },
 }
 
-use self::IndexedTy::*;
 type Files = linear_map::LinearMap<FileFormat, FileId>;
 
 fn main() {
@@ -33,12 +33,16 @@ fn main() {
     );
 
     let mut core = Core::new().unwrap();
-    let handle = core.handle();
     let session_config = SessionConfig::default();
     let credentials = Credentials::with_password(args[1].to_owned(), args[2].to_owned());
     info!("Connecting ...");
     let session = core
-        .run(Session::connect(session_config, credentials, None, handle))
+        .run(Session::connect(
+            session_config,
+            credentials,
+            None,
+            core.handle(),
+        ))
         .unwrap();
     info!("Connected!");
 
@@ -63,29 +67,47 @@ fn main() {
                     SpotifyId::from_base62(spotify_match.get(2).unwrap().as_str()).unwrap();
 
                 match spotify_type {
-                    "playlist" => {
-                        let playlist = core.run(Playlist::get(&session, spotify_id)).unwrap();
-                        ids.extend(playlist.tracks.into_iter().map(|id| (id, Track)));
-                    }
+                    "playlist" => ids.extend(
+                        core.run(Playlist::get(&session, spotify_id))
+                            .unwrap()
+                            .tracks
+                            .into_iter()
+                            .map(|id| (id, IndexedTy::Track { album_name: None })),
+                    ),
 
                     "album" => {
                         let album = core.run(Album::get(&session, spotify_id)).unwrap();
-                        ids.extend(album.tracks.into_iter().map(|id| (id, Track)));
+                        let album_name = Rc::new(album.name);
+                        ids.extend(album.tracks.into_iter().map(|id| {
+                            (
+                                id,
+                                IndexedTy::Track {
+                                    album_name: Some(album_name.clone()),
+                                },
+                            )
+                        }));
                     }
 
                     "show" => {
-                        let show = core.run(Show::get(&session, spotify_id)).unwrap();
+                        let show = Rc::new(core.run(Show::get(&session, spotify_id)).unwrap());
                         // Since Spotify returns the IDs of episodes in a show in reverse order,
                         // we have to reverse it ourselves again.
-                        ids.extend(show.episodes.into_iter().rev().map(|id| (id, Episode)));
+                        ids.extend(show.episodes.iter().rev().map(|id| {
+                            (
+                                id,
+                                IndexedTy::Episode {
+                                    show: Some(show.clone()),
+                                },
+                            )
+                        }));
                     }
 
                     "track" => {
-                        ids.insert(spotify_id, Track);
+                        ids.insert(spotify_id, IndexedTy::Track { album_name: None });
                     }
 
                     "episode" => {
-                        ids.insert(spotify_id, Episode);
+                        ids.insert(spotify_id, IndexedTy::Episode { show: None });
                     }
 
                     _ => warn!("Unknown link type: {}", spotify_type),
@@ -99,7 +121,7 @@ fn main() {
     for (id, value) in ids {
         let fmtid = id.to_base62();
         match value {
-            Track => {
+            IndexedTy::Track { mut album_name } => {
                 info!("Getting track {}...", fmtid);
                 if let Ok(mut track) = core.run(Track::get(&session, id)) {
                     if !track.available {
@@ -140,24 +162,33 @@ fn main() {
                         &fmtid,
                         &track.name,
                         |core| {
-                            core.run(Album::get(&session, track.album))
-                                .expect("Cannot get album metadata")
-                                .name
+                            album_name
+                                .get_or_insert_with(|| {
+                                    Rc::new(
+                                        core.run(Album::get(&session, track.album))
+                                            .expect("Cannot get album metadata")
+                                            .name,
+                                    )
+                                })
+                                .as_str()
                         },
                         &artists_strs,
                     );
                 }
             }
 
-            Episode => {
+            IndexedTy::Episode { show } => {
                 info!("Getting episode {}...", fmtid);
                 if let Ok(episode) = core.run(Episode::get(&session, id)) {
                     if !episode.available {
                         warn!("Episode {} is not available.", fmtid);
                     }
-                    let show = core
-                        .run(Show::get(&session, episode.show))
-                        .expect("Cannot get show");
+                    let show = show.unwrap_or_else(|| {
+                        Rc::new(
+                            core.run(Show::get(&session, episode.show))
+                                .expect("Cannot get show"),
+                        )
+                    });
                     let sname = &show.name;
                     handle_entry(
                         &mut core,
@@ -168,7 +199,7 @@ fn main() {
                         &fmtid,
                         &episode.name,
                         |_| sname,
-                        &[show.publisher],
+                        &[show.publisher.clone()],
                     );
                 }
             }
