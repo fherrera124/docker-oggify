@@ -27,25 +27,6 @@ use IndexedTy::*;
 
 type Files = linear_map::LinearMap<FileFormat, FileId>;
 
-fn get_usable_file_id(files: &Files) -> &FileId {
-    files
-        .get(&FileFormat::OGG_VORBIS_320)
-        .or_else(|| files.get(&FileFormat::OGG_VORBIS_160))
-        .or_else(|| files.get(&FileFormat::OGG_VORBIS_96))
-        .expect("Could not find a OGG_VORBIS format for the track.")
-}
-
-fn print_file_formats(files: &Files) {
-    debug!(
-        "File formats:{}",
-        files.keys().fold(String::new(), |mut acc, filetype| {
-            acc.push(' ');
-            acc += &format!("{:?}", filetype);
-            acc
-        })
-    );
-}
-
 fn main() {
     Builder::from_env(Env::default().default_filter_or("info")).init();
 
@@ -281,4 +262,23 @@ fn main() {
             }
         }
     }
+}
+
+fn get_usable_file_id(files: &Files) -> &FileId {
+    files
+        .get(&FileFormat::OGG_VORBIS_320)
+        .or_else(|| files.get(&FileFormat::OGG_VORBIS_160))
+        .or_else(|| files.get(&FileFormat::OGG_VORBIS_96))
+        .expect("Could not find a OGG_VORBIS format for the track.")
+}
+
+fn print_file_formats(files: &Files) {
+    debug!(
+        "File formats:{}",
+        files.keys().fold(String::new(), |mut acc, filetype| {
+            acc.push(' ');
+            acc += &format!("{:?}", filetype);
+            acc
+        })
+    );
 }
