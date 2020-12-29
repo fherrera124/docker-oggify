@@ -140,10 +140,9 @@ fn main() {
                         &fmtid,
                         &track.name,
                         |core| {
-                            let album = core
-                                .run(Album::get(&session, track.album))
-                                .expect("Cannot get album metadata");
-                            album.name
+                            core.run(Album::get(&session, track.album))
+                                .expect("Cannot get album metadata")
+                                .name
                         },
                         &artists_strs,
                     );
