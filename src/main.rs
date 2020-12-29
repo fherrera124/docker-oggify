@@ -1,7 +1,6 @@
 #[macro_use]
 extern crate log;
 
-use std::fmt;
 use std::io::{self, BufRead};
 use std::io::{Read, Write};
 use std::path::Path;
@@ -102,7 +101,14 @@ fn main() {
 
     for (id, value) in ids {
         let fmtid = id.to_base62();
-        info!("Getting {} {}...", value, fmtid);
+        info!(
+            "Getting {} {}...",
+            match value {
+                Track => "track",
+                Episode => "episode",
+            },
+            fmtid
+        );
         match value {
             Track => {
                 if let Ok(mut track) = core.run(Track::get(&session, id)) {
@@ -180,62 +186,6 @@ fn main() {
     }
 }
 
-impl fmt::Display for IndexedTy {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Track => "track",
-                Episode => "episode",
-            }
-        )
-    }
-}
-
-fn get_usable_file_id(files: &Files) -> &FileId {
-    files
-        .get(&FileFormat::OGG_VORBIS_320)
-        .or_else(|| files.get(&FileFormat::OGG_VORBIS_160))
-        .or_else(|| files.get(&FileFormat::OGG_VORBIS_96))
-        .expect("Could not find a OGG_VORBIS format for the track.")
-}
-
-fn print_file_formats(files: &Files) {
-    debug!(
-        "File formats:{}",
-        files.keys().fold(String::new(), |mut acc, filetype| {
-            acc.push(' ');
-            acc += &format!("{:?}", filetype);
-            acc
-        })
-    );
-}
-
-fn run_helper<'a>(
-    helper_path: &'a str,
-    fmtid: &'a str,
-    element: &'a str,
-    group: &'a str,
-    origins: impl Iterator<Item = &'a str>,
-    decrypted_buffer: &[u8],
-) {
-    let mut cmd = Command::new(helper_path);
-    cmd.stdin(Stdio::piped());
-    cmd.arg(fmtid).arg(element).arg(group).args(origins);
-    let mut child = cmd.spawn().expect("Could not run helper program");
-    let pipe = child.stdin.as_mut().expect("Could not open helper stdin");
-    pipe.write_all(decrypted_buffer)
-        .expect("Failed to write to stdin");
-    assert!(
-        child
-            .wait()
-            .expect("Out of ideas for error messages")
-            .success(),
-        "Helper script returned an error"
-    );
-}
-
 fn handle_entry<'a, 'c, GG, GR>(
     core: &'c mut Core,
     session: &'c Session,
@@ -255,8 +205,19 @@ fn handle_entry<'a, 'c, GG, GR>(
         info!("File {} already exists.", fname);
         return;
     }
-    print_file_formats(files);
-    let file_id = *get_usable_file_id(files);
+    debug!(
+        "File formats:{}",
+        files.keys().fold(String::new(), |mut acc, filetype| {
+            acc.push(' ');
+            acc += &format!("{:?}", filetype);
+            acc
+        })
+    );
+    let file_id = *files
+        .get(&FileFormat::OGG_VORBIS_320)
+        .or_else(|| files.get(&FileFormat::OGG_VORBIS_160))
+        .or_else(|| files.get(&FileFormat::OGG_VORBIS_96))
+        .expect("Could not find a OGG_VORBIS format for the track.");
     let key = core
         .run(session.audio_key().request(track_id, file_id))
         .expect("Cannot get audio key");
@@ -280,13 +241,22 @@ fn handle_entry<'a, 'c, GG, GR>(
             info!("Filename: {}", fname);
         }
     } else {
-        run_helper(
-            &args[3],
-            fmtid,
-            element,
-            group_getter(core).as_ref(),
-            origins.iter().map(|i| i.as_str()),
-            decrypted_buffer,
+        let mut cmd = Command::new(&args[3]);
+        cmd.stdin(Stdio::piped());
+        cmd.arg(fmtid)
+            .arg(element)
+            .arg(group_getter(core).as_ref())
+            .args(origins.iter().map(|i| i.as_str()));
+        let mut child = cmd.spawn().expect("Could not run helper program");
+        let pipe = child.stdin.as_mut().expect("Could not open helper stdin");
+        pipe.write_all(decrypted_buffer)
+            .expect("Failed to write to stdin");
+        assert!(
+            child
+                .wait()
+                .expect("Out of ideas for error messages")
+                .success(),
+            "Helper script returned an error"
         );
     }
 }
