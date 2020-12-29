@@ -18,6 +18,14 @@ use librespot_metadata::{Album, Artist, Episode, Metadata, Playlist, Show, Track
 use regex::Regex;
 use tokio_core::reactor::Core;
 
+enum IndexedTy {
+    Track,
+    Episode,
+}
+
+use self::IndexedTy::*;
+type Files = linear_map::LinearMap<FileFormat, FileId>;
+
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
@@ -172,16 +180,20 @@ fn main() {
     }
 }
 
-pub enum IndexedTy {
-    Track,
-    Episode,
+impl fmt::Display for IndexedTy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Track => "track",
+                Episode => "episode",
+            }
+        )
+    }
 }
 
-pub use IndexedTy::*;
-
-pub type Files = linear_map::LinearMap<FileFormat, FileId>;
-
-pub fn get_usable_file_id(files: &Files) -> &FileId {
+fn get_usable_file_id(files: &Files) -> &FileId {
     files
         .get(&FileFormat::OGG_VORBIS_320)
         .or_else(|| files.get(&FileFormat::OGG_VORBIS_160))
@@ -189,7 +201,7 @@ pub fn get_usable_file_id(files: &Files) -> &FileId {
         .expect("Could not find a OGG_VORBIS format for the track.")
 }
 
-pub fn print_file_formats(files: &Files) {
+fn print_file_formats(files: &Files) {
     debug!(
         "File formats:{}",
         files.keys().fold(String::new(), |mut acc, filetype| {
@@ -200,7 +212,7 @@ pub fn print_file_formats(files: &Files) {
     );
 }
 
-pub fn run_helper<'a>(
+fn run_helper<'a>(
     helper_path: &'a str,
     fmtid: &'a str,
     element: &'a str,
@@ -224,7 +236,7 @@ pub fn run_helper<'a>(
     );
 }
 
-pub fn handle_entry<'a, 'c, GG, GR>(
+fn handle_entry<'a, 'c, GG, GR>(
     core: &'c mut Core,
     session: &'c Session,
     args: &'a [String],
@@ -276,18 +288,5 @@ pub fn handle_entry<'a, 'c, GG, GR>(
             origins.iter().map(|i| i.as_str()),
             decrypted_buffer,
         );
-    }
-}
-
-impl fmt::Display for IndexedTy {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Track => "track",
-                Episode => "episode",
-            }
-        )
     }
 }
