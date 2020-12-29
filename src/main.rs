@@ -1,21 +1,13 @@
-extern crate env_logger;
-extern crate librespot_audio;
-extern crate librespot_core;
-extern crate librespot_metadata;
 #[macro_use]
 extern crate log;
-extern crate regex;
-extern crate sanitize_filename;
-extern crate scoped_threadpool;
-extern crate tokio_core;
 
-use std::{env, panic};
 use std::io::Write;
 use std::io::{self, BufRead, Read, Result};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+use std::{env, panic};
 
 use env_logger::{Builder, Env};
 use indexmap::map::IndexMap;
@@ -23,11 +15,26 @@ use librespot_audio::{AudioDecrypt, AudioFile};
 use librespot_core::authentication::Credentials;
 use librespot_core::config::SessionConfig;
 use librespot_core::session::Session;
-use librespot_core::spotify_id::SpotifyId;
+use librespot_core::spotify_id::{FileId, SpotifyId};
 use librespot_metadata::{Album, Artist, Episode, FileFormat, Metadata, Playlist, Show, Track};
 use regex::Regex;
 use scoped_threadpool::Pool;
 use tokio_core::reactor::Core;
+
+enum IndexedTy {
+    Track,
+    Episode,
+}
+
+use IndexedTy::*;
+
+fn get_usable_file_id(files: &linear_map::LinearMap<FileFormat, FileId>) -> &FileId {
+    files
+        .get(&FileFormat::OGG_VORBIS_320)
+        .or_else(|| files.get(&FileFormat::OGG_VORBIS_160))
+        .or_else(|| files.get(&FileFormat::OGG_VORBIS_96))
+        .expect("Could not find a OGG_VORBIS format for the track.")
+}
 
 fn main() {
     Builder::from_env(Env::default().default_filter_or("info")).init();
@@ -59,14 +66,15 @@ fn main() {
     for line in io::stdin().lock().lines() {
         match line {
             Ok(line) => {
-                if line.trim() == "done" {
+                let line = line.trim();
+                if line == "done" {
                     break;
                 }
-                let spotify_captures = re.captures(&line.trim());
-                if spotify_captures.is_none() {
-                    continue;
-                }
-                let spotify_match = spotify_captures.unwrap();
+                let spotify_captures = re.captures(line);
+                let spotify_match = match spotify_captures {
+                    None => continue,
+                    Some(x) => x,
+                };
                 let spotify_type = spotify_match.get(1).unwrap().as_str();
                 let spotify_id =
                     SpotifyId::from_base62(spotify_match.get(2).unwrap().as_str()).unwrap();
@@ -74,38 +82,27 @@ fn main() {
                 match spotify_type {
                     "playlist" => {
                         let playlist = core.run(Playlist::get(&session, spotify_id)).unwrap();
-                        for track_id in playlist.tracks {
-                            ids.insert(track_id, "track");
-                        }
+                        ids.extend(playlist.tracks.into_iter().map(|id| (id, Track)));
                     }
 
                     "album" => {
                         let album = core.run(Album::get(&session, spotify_id)).unwrap();
-                        for track_id in album.tracks {
-                            ids.insert(track_id, "track");
-                        }
+                        ids.extend(album.tracks.into_iter().map(|id| (id, Track)));
                     }
 
                     "show" => {
                         let show = core.run(Show::get(&session, spotify_id)).unwrap();
-                        let mut episodes = IndexMap::new();
-                        for episode_id in show.episodes {
-                            episodes.insert(episode_id, "episode");
-                        }
                         // Since Spotify returns the IDs of episodes in a show in reverse order,
                         // we have to reverse it ourselves again.
-                        episodes.reverse();
-                        for (key, value) in episodes.iter() {
-                            ids.insert(*key, value);
-                        }
+                        ids.extend(show.episodes.into_iter().rev().map(|id| (id, Episode)));
                     }
 
                     "track" => {
-                        ids.insert(spotify_id, "track");
+                        ids.insert(spotify_id, Track);
                     }
 
                     "episode" => {
-                        ids.insert(spotify_id, "episode");
+                        ids.insert(spotify_id, Episode);
                     }
 
                     _ => warn!("Unknown link type."),
@@ -118,34 +115,29 @@ fn main() {
 
     for (id, value) in ids {
         match value {
-            "track" => {
+            Track => {
+                let fmtid = id.to_base62();
                 info!("Getting track {}...", id.to_base62());
-                let track_result = core.run(Track::get(&session, id));
-                if track_result.is_ok() {
-                    let mut track = track_result.unwrap();
+                if let Ok(mut track) = core.run(Track::get(&session, id)) {
                     if !track.available {
-                        warn!(
-                            "Track {} is not available, finding alternative...",
-                            id.to_base62()
-                        );
-                        let alt_track = track.alternatives.iter().find_map(|id| {
-                            let alt_track = core
-                                .run(Track::get(&session, *id))
-                                .expect("Cannot get track metadata");
-                            match alt_track.available {
-                                true => Some(alt_track),
-                                false => None,
+                        warn!("Track {} is not available, finding alternative...", fmtid);
+                        let alt_track = track
+                            .alternatives
+                            .iter()
+                            .map(|id| {
+                                core.run(Track::get(&session, *id))
+                                    .expect("Cannot get track metadata")
+                            })
+                            .find(|alt_track| alt_track.available);
+                        track = match alt_track {
+                            Some(x) => {
+                                warn!("Found track alternative {} -> {}", fmtid, x.id.to_base62());
+                                x
                             }
-                        });
-                        track = alt_track.expect(&format!(
-                            "Could not find alternative for track {}",
-                            id.to_base62()
-                        ));
-                        warn!(
-                            "Found track alternative {} -> {}",
-                            id.to_base62(),
-                            track.id.to_base62()
-                        );
+                            None => {
+                                panic!("Could not find alternative for track {}", fmtid);
+                            }
+                        };
                     }
                     let artists_strs: Vec<_> = track
                         .artists
@@ -165,12 +157,7 @@ fn main() {
                             .collect::<Vec<_>>()
                             .join(" ")
                     );
-                    let file_id = track
-                        .files
-                        .get(&FileFormat::OGG_VORBIS_320)
-                        .or(track.files.get(&FileFormat::OGG_VORBIS_160))
-                        .or(track.files.get(&FileFormat::OGG_VORBIS_96))
-                        .expect("Could not find a OGG_VORBIS format for the track.");
+                    let file_id = get_usable_file_id(&track.files);
                     let key = core
                         .run(session.audio_key().request(track.id, *file_id))
                         .expect("Cannot get audio key");
@@ -242,13 +229,12 @@ fn main() {
                 }
             }
 
-            "episode" => {
-                info!("Getting episode {}...", id.to_base62());
-                let episode_result = core.run(Episode::get(&session, id));
-                if episode_result.is_ok() {
-                    let episode = episode_result.unwrap();
+            Episode => {
+                let fmtid = id.to_base62();
+                info!("Getting episode {}...", fmtid);
+                if let Ok(episode) = core.run(Episode::get(&session, id)) {
                     if !episode.available {
-                        warn!("Episode {} is not available.", id.to_base62());
+                        warn!("Episode {} is not available.", fmtid);
                     }
                     let show = core
                         .run(Show::get(&session, episode.show))
@@ -262,12 +248,7 @@ fn main() {
                             .collect::<Vec<_>>()
                             .join(" ")
                     );
-                    let file_id = episode
-                        .files
-                        .get(&FileFormat::OGG_VORBIS_320)
-                        .or(episode.files.get(&FileFormat::OGG_VORBIS_160))
-                        .or(episode.files.get(&FileFormat::OGG_VORBIS_96))
-                        .expect("Could not find a OGG_VORBIS format for the episode.");
+                    let file_id = get_usable_file_id(&episode.files);
                     let key = core
                         .run(session.audio_key().request(episode.id, *file_id))
                         .expect("Cannot get audio key");
@@ -324,10 +305,6 @@ fn main() {
                         }
                     }
                 }
-            }
-
-            _ => {
-                warn!("Error {}", value);
             }
         }
     }

@@ -775,6 +775,7 @@ dependencies = [
  "librespot-audio",
  "librespot-core",
  "librespot-metadata",
+ "linear-map",
  "log 0.4.11",
  "regex",
  "sanitize-filename",
