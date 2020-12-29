@@ -1,7 +1,9 @@
+use librespot_audio::AudioDecrypt;
+use librespot_core::audio_key::AudioKey;
 use librespot_core::spotify_id::FileId;
 use librespot_metadata::FileFormat;
 use std::fmt;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
@@ -63,11 +65,16 @@ pub fn write_to_disk<'a, GG, GR>(
     element: &'a str,
     group_getter: GG,
     origins: &[String],
-    decrypted_buffer: Vec<u8>,
+    key: AudioKey,
+    buffer: &[u8],
 ) where
     GG: FnOnce() -> GR,
     GR: AsRef<str>,
 {
+    let mut decrypted_buffer = Vec::new();
+    AudioDecrypt::new(key, &buffer[..])
+        .read_to_end(&mut decrypted_buffer)
+        .expect("Cannot decrypt stream");
     let fname = sanitize_filename::sanitize(format!("{} - {}.ogg", origins.join(", "), element));
     let decrypted_buffer = &decrypted_buffer[0xa7..];
     if args.len() == 3 {

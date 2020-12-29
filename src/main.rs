@@ -7,7 +7,7 @@ use std::{env, panic};
 
 use env_logger::{Builder, Env};
 use indexmap::map::IndexMap;
-use librespot_audio::{AudioDecrypt, AudioFile};
+use librespot_audio::AudioFile;
 use librespot_core::authentication::Credentials;
 use librespot_core::config::SessionConfig;
 use librespot_core::session::Session;
@@ -149,10 +149,6 @@ fn main() {
                         encrypted_file
                             .read_to_end(&mut buffer)
                             .expect("Cannot read file stream");
-                        let mut decrypted_buffer = Vec::new();
-                        AudioDecrypt::new(key, &buffer[..])
-                            .read_to_end(&mut decrypted_buffer)
-                            .expect("Cannot decrypt stream");
                         write_to_disk(
                             &args[..],
                             &fmtid,
@@ -164,7 +160,8 @@ fn main() {
                                 album.name
                             },
                             &artists_strs,
-                            decrypted_buffer,
+                            key,
+                            &buffer[..],
                         );
                     }
                 }
@@ -194,10 +191,6 @@ fn main() {
                         encrypted_file
                             .read_to_end(&mut buffer)
                             .expect("Cannot read file stream");
-                        let mut decrypted_buffer = Vec::new();
-                        AudioDecrypt::new(key, &buffer[..])
-                            .read_to_end(&mut decrypted_buffer)
-                            .expect("Cannot decrypt stream");
                         let sname = &show.name;
                         write_to_disk(
                             &args[..],
@@ -205,7 +198,8 @@ fn main() {
                             &episode.name,
                             || sname,
                             &[show.publisher],
-                            decrypted_buffer,
+                            key,
+                            &buffer[..],
                         );
                     }
                 }
