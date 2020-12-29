@@ -1,10 +1,8 @@
 #[macro_use]
 extern crate log;
 
-use std::io::Write;
 use std::io::{self, BufRead, Read};
 use std::path::Path;
-use std::process::{Command, Stdio};
 use std::{env, panic};
 
 use env_logger::{Builder, Env};
@@ -13,19 +11,13 @@ use librespot_audio::{AudioDecrypt, AudioFile};
 use librespot_core::authentication::Credentials;
 use librespot_core::config::SessionConfig;
 use librespot_core::session::Session;
-use librespot_core::spotify_id::{FileId, SpotifyId};
-use librespot_metadata::{Album, Artist, Episode, FileFormat, Metadata, Playlist, Show, Track};
+use librespot_core::spotify_id::SpotifyId;
+use librespot_metadata::{Album, Artist, Episode, Metadata, Playlist, Show, Track};
 use regex::Regex;
 use tokio_core::reactor::Core;
 
-enum IndexedTy {
-    Track,
-    Episode,
-}
-
-use IndexedTy::*;
-
-type Files = linear_map::LinearMap<FileFormat, FileId>;
+mod utils;
+use utils::*;
 
 fn main() {
     Builder::from_env(Env::default().default_filter_or("info")).init();
@@ -102,10 +94,10 @@ fn main() {
     }
 
     for (id, value) in ids {
+        let fmtid = id.to_base62();
+        info!("Getting {} {}...", value, fmtid);
         match value {
             Track => {
-                let fmtid = id.to_base62();
-                info!("Getting track {}...", id.to_base62());
                 if let Ok(mut track) = core.run(Track::get(&session, id)) {
                     if !track.available {
                         warn!("Track {} is not available, finding alternative...", fmtid);
@@ -161,6 +153,7 @@ fn main() {
                         AudioDecrypt::new(key, &buffer[..])
                             .read_to_end(&mut decrypted_buffer)
                             .expect("Cannot decrypt stream");
+                        let decrypted_buffer = &decrypted_buffer[0xa7..];
                         if args.len() == 3 {
                             let fname = sanitize_filename::sanitize(format!(
                                 "{} - {}.ogg",
@@ -170,7 +163,7 @@ fn main() {
                             if Path::new(&fname).exists() {
                                 info!("File {} already exists.", fname);
                             } else {
-                                std::fs::write(&fname, &decrypted_buffer[0xa7..])
+                                std::fs::write(&fname, decrypted_buffer)
                                     .expect("Cannot write decrypted track");
                                 info!("Filename: {}", fname);
                             }
@@ -178,31 +171,20 @@ fn main() {
                             let album = core
                                 .run(Album::get(&session, track.album))
                                 .expect("Cannot get album metadata");
-                            let mut cmd = Command::new(args[3].to_owned());
-                            cmd.stdin(Stdio::piped());
-                            cmd.arg(id.to_base62())
-                                .arg(track.name)
-                                .arg(album.name)
-                                .args(artists_strs.iter());
-                            let mut child = cmd.spawn().expect("Could not run helper program");
-                            let pipe = child.stdin.as_mut().expect("Could not open helper stdin");
-                            pipe.write_all(&decrypted_buffer[0xa7..])
-                                .expect("Failed to write to stdin");
-                            assert!(
-                                child
-                                    .wait()
-                                    .expect("Out of ideas for error messages")
-                                    .success(),
-                                "Helper script returned an error"
-                            );
+                            run_helper(
+                                &args[3],
+                                &fmtid,
+                                &track.name,
+                                &album.name,
+                                artists_strs.iter().map(|i| i.as_str()),
+                                decrypted_buffer,
+                            )
                         }
                     }
                 }
             }
 
             Episode => {
-                let fmtid = id.to_base62();
-                info!("Getting episode {}...", fmtid);
                 if let Ok(episode) = core.run(Episode::get(&session, id)) {
                     if !episode.available {
                         warn!("Episode {} is not available.", fmtid);
@@ -230,31 +212,23 @@ fn main() {
                         AudioDecrypt::new(key, &buffer[..])
                             .read_to_end(&mut decrypted_buffer)
                             .expect("Cannot decrypt stream");
+                        let decrypted_buffer = &decrypted_buffer[0xa7..];
                         if args.len() == 3 {
                             if Path::new(&fname).exists() {
                                 info!("File {} already exists.", fname);
                             } else {
-                                std::fs::write(&fname, &decrypted_buffer[0xa7..])
+                                std::fs::write(&fname, decrypted_buffer)
                                     .expect("Cannot write decrypted episode");
                                 info!("Filename: {}", fname);
                             }
                         } else {
-                            let mut cmd = Command::new(args[3].to_owned());
-                            cmd.stdin(Stdio::piped());
-                            cmd.arg(id.to_base62())
-                                .arg(episode.name)
-                                .arg(show.name)
-                                .arg(show.publisher);
-                            let mut child = cmd.spawn().expect("Could not run helper program");
-                            let pipe = child.stdin.as_mut().expect("Could not open helper stdin");
-                            pipe.write_all(&decrypted_buffer[0xa7..])
-                                .expect("Failed to write to stdin");
-                            assert!(
-                                child
-                                    .wait()
-                                    .expect("Out of ideas for error messages")
-                                    .success(),
-                                "Helper script returned an error"
+                            run_helper(
+                                &args[3],
+                                &fmtid,
+                                &episode.name,
+                                &show.name,
+                                [show.publisher.as_str()].iter().copied(),
+                                decrypted_buffer,
                             );
                         }
                     }
@@ -262,23 +236,4 @@ fn main() {
             }
         }
     }
-}
-
-fn get_usable_file_id(files: &Files) -> &FileId {
-    files
-        .get(&FileFormat::OGG_VORBIS_320)
-        .or_else(|| files.get(&FileFormat::OGG_VORBIS_160))
-        .or_else(|| files.get(&FileFormat::OGG_VORBIS_96))
-        .expect("Could not find a OGG_VORBIS format for the track.")
-}
-
-fn print_file_formats(files: &Files) {
-    debug!(
-        "File formats:{}",
-        files.keys().fold(String::new(), |mut acc, filetype| {
-            acc.push(' ');
-            acc += &format!("{:?}", filetype);
-            acc
-        })
-    );
 }
