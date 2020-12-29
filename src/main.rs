@@ -177,18 +177,18 @@ fn main() {
     }
 }
 
-fn handle_entry<'a, 'c, GG, GR>(
-    core: &'c mut Core,
-    session: &'c Session,
-    args: &'a [String],
+fn handle_entry<GG, GR>(
+    core: &mut Core,
+    session: &Session,
+    args: &[String],
     track_id: SpotifyId,
     files: &Files,
-    fmtid: &'a str,
-    element: &'a str,
+    fmtid: &str,
+    element: &str,
     group_getter: GG,
     origins: &[String],
 ) where
-    GG: FnOnce(&'c mut Core) -> GR,
+    GG: FnOnce(&mut Core) -> GR,
     GR: AsRef<str>,
 {
     let fname = sanitize_filename::sanitize(format!("{} - {}.ogg", origins.join(", "), element));
