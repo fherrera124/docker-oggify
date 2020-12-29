@@ -8,12 +8,9 @@ use std::process::{Command, Stdio};
 
 use indexmap::map::IndexMap;
 use librespot_audio::{AudioDecrypt, AudioFile};
-use librespot_core::authentication::Credentials;
-use librespot_core::config::SessionConfig;
-use librespot_core::session::Session;
 use librespot_core::spotify_id::{FileId, SpotifyId};
-use librespot_metadata::FileFormat;
-use librespot_metadata::{Album, Artist, Episode, Metadata, Playlist, Show, Track};
+use librespot_core::{authentication::Credentials, config::SessionConfig, session::Session};
+use librespot_metadata::{Album, Artist, Episode, FileFormat, Metadata, Playlist, Show, Track};
 use regex::Regex;
 use tokio_core::reactor::Core;
 
