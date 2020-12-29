@@ -234,12 +234,8 @@ fn handle_entry<'a, 'c, GG, GR>(
         .expect("Cannot decrypt stream");
     let decrypted_buffer = &decrypted_buffer[0xa7..];
     if args.len() == 3 {
-        if Path::new(&fname).exists() {
-            info!("File {} already exists.", fname);
-        } else {
-            std::fs::write(&fname, decrypted_buffer).expect("Cannot write decrypted audio stream");
-            info!("Filename: {}", fname);
-        }
+        std::fs::write(&fname, decrypted_buffer).expect("Cannot write decrypted audio stream");
+        info!("Filename: {}", fname);
     } else {
         let mut cmd = Command::new(&args[3]);
         cmd.stdin(Stdio::piped());
