@@ -2,11 +2,9 @@
 extern crate log;
 
 use std::io::Write;
-use std::io::{self, BufRead, Read, Result};
+use std::io::{self, BufRead, Read};
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
 use std::{env, panic};
 
 use env_logger::{Builder, Env};
@@ -18,7 +16,6 @@ use librespot_core::session::Session;
 use librespot_core::spotify_id::{FileId, SpotifyId};
 use librespot_metadata::{Album, Artist, Episode, FileFormat, Metadata, Playlist, Show, Track};
 use regex::Regex;
-use scoped_threadpool::Pool;
 use tokio_core::reactor::Core;
 
 enum IndexedTy {
@@ -55,8 +52,6 @@ fn main() {
         .run(Session::connect(session_config, credentials, None, handle))
         .unwrap();
     info!("Connected!");
-
-    let mut threadpool = Pool::new(1);
 
     let re = Regex::new(r"(playlist|track|album|episode|show)[/:]([a-zA-Z0-9]+)").unwrap();
 
@@ -165,7 +160,6 @@ fn main() {
                         .run(AudioFile::open(&session, *file_id, 320, true))
                         .unwrap();
                     let mut buffer = Vec::new();
-                    let mut read_all: Result<usize> = Ok(0);
                     let fname = sanitize_filename::sanitize(format!(
                         "{} - {}.ogg",
                         artists_strs.join(", "),
@@ -175,17 +169,9 @@ fn main() {
                     if Path::new(&fname).exists() {
                         info!("File {} already exists.", fname);
                     } else {
-                        let fetched = AtomicBool::new(false);
-                        threadpool.scoped(|scope| {
-                            scope.execute(|| {
-                                read_all = encrypted_file.read_to_end(&mut buffer);
-                                fetched.store(true, Ordering::Release);
-                            });
-                            while !fetched.load(Ordering::Acquire) {
-                                core.turn(Some(Duration::from_millis(100)));
-                            }
-                        });
-                        read_all.expect("Cannot read file stream");
+                        encrypted_file
+                            .read_to_end(&mut buffer)
+                            .expect("Cannot read file stream");
                         let mut decrypted_buffer = Vec::new();
                         AudioDecrypt::new(key, &buffer[..])
                             .read_to_end(&mut decrypted_buffer)
@@ -256,22 +242,13 @@ fn main() {
                         .run(AudioFile::open(&session, *file_id, 320, true))
                         .unwrap();
                     let mut buffer = Vec::new();
-                    let mut read_all: Result<usize> = Ok(0);
                     let fname = format!("{} - {}.ogg", show.publisher, episode.name);
                     if Path::new(&fname).exists() {
                         info!("File {} already exists.", fname);
                     } else {
-                        let fetched = AtomicBool::new(false);
-                        threadpool.scoped(|scope| {
-                            scope.execute(|| {
-                                read_all = encrypted_file.read_to_end(&mut buffer);
-                                fetched.store(true, Ordering::Release);
-                            });
-                            while !fetched.load(Ordering::Acquire) {
-                                core.turn(Some(Duration::from_millis(100)));
-                            }
-                        });
-                        read_all.expect("Cannot read file stream");
+                        encrypted_file
+                            .read_to_end(&mut buffer)
+                            .expect("Cannot read file stream");
                         let mut decrypted_buffer = Vec::new();
                         AudioDecrypt::new(key, &buffer[..])
                             .read_to_end(&mut decrypted_buffer)

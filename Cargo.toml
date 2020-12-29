@@ -17,7 +17,6 @@ librespot-audio = { git = "https://github.com/librespot-org/librespot.git", rev=
 regex = "1.1.0"
 log = "0.4.6"
 env_logger = "0.6.0"
-scoped_threadpool = "0.1.9"
 sanitize-filename = "0.3.0"
 indexmap = "1.6.1"
 linear-map = "1.2.0"
