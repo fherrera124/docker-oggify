@@ -1,7 +1,7 @@
 #[macro_use]
 extern crate log;
 
-use std::io::{self, BufRead, Read};
+use std::io::{self, BufRead};
 use std::path::Path;
 use std::{env, panic};
 
@@ -142,13 +142,9 @@ fn main() {
                         let key = core
                             .run(session.audio_key().request(track.id, *file_id))
                             .expect("Cannot get audio key");
-                        let mut encrypted_file = core
+                        let encrypted_file = core
                             .run(AudioFile::open(&session, *file_id, 320, true))
                             .unwrap();
-                        let mut buffer = Vec::new();
-                        encrypted_file
-                            .read_to_end(&mut buffer)
-                            .expect("Cannot read file stream");
                         write_to_disk(
                             &args[..],
                             &fmtid,
@@ -161,7 +157,7 @@ fn main() {
                             },
                             &artists_strs,
                             key,
-                            &buffer[..],
+                            encrypted_file,
                         );
                     }
                 }
@@ -184,13 +180,9 @@ fn main() {
                         let key = core
                             .run(session.audio_key().request(episode.id, *file_id))
                             .expect("Cannot get audio key");
-                        let mut encrypted_file = core
+                        let encrypted_file = core
                             .run(AudioFile::open(&session, *file_id, 320, true))
                             .unwrap();
-                        let mut buffer = Vec::new();
-                        encrypted_file
-                            .read_to_end(&mut buffer)
-                            .expect("Cannot read file stream");
                         let sname = &show.name;
                         write_to_disk(
                             &args[..],
@@ -199,7 +191,7 @@ fn main() {
                             || sname,
                             &[show.publisher],
                             key,
-                            &buffer[..],
+                            encrypted_file,
                         );
                     }
                 }

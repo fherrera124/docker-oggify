@@ -1,4 +1,4 @@
-use librespot_audio::AudioDecrypt;
+use librespot_audio::{AudioDecrypt, AudioFile};
 use librespot_core::audio_key::AudioKey;
 use librespot_core::spotify_id::FileId;
 use librespot_metadata::FileFormat;
@@ -66,11 +66,15 @@ pub fn write_to_disk<'a, GG, GR>(
     group_getter: GG,
     origins: &[String],
     key: AudioKey,
-    buffer: &[u8],
+    mut encrypted_file: AudioFile,
 ) where
     GG: FnOnce() -> GR,
     GR: AsRef<str>,
 {
+    let mut buffer = Vec::new();
+    encrypted_file
+        .read_to_end(&mut buffer)
+        .expect("Cannot read file stream");
     let mut decrypted_buffer = Vec::new();
     AudioDecrypt::new(key, &buffer[..])
         .read_to_end(&mut decrypted_buffer)
