@@ -153,33 +153,19 @@ fn main() {
                         AudioDecrypt::new(key, &buffer[..])
                             .read_to_end(&mut decrypted_buffer)
                             .expect("Cannot decrypt stream");
-                        let decrypted_buffer = &decrypted_buffer[0xa7..];
-                        if args.len() == 3 {
-                            let fname = sanitize_filename::sanitize(format!(
-                                "{} - {}.ogg",
-                                artists_strs.join(", "),
-                                track.name
-                            ));
-                            if Path::new(&fname).exists() {
-                                info!("File {} already exists.", fname);
-                            } else {
-                                std::fs::write(&fname, decrypted_buffer)
-                                    .expect("Cannot write decrypted track");
-                                info!("Filename: {}", fname);
-                            }
-                        } else {
-                            let album = core
-                                .run(Album::get(&session, track.album))
-                                .expect("Cannot get album metadata");
-                            run_helper(
-                                &args[3],
-                                &fmtid,
-                                &track.name,
-                                &album.name,
-                                artists_strs.iter().map(|i| i.as_str()),
-                                decrypted_buffer,
-                            )
-                        }
+                        write_to_disk(
+                            &args[..],
+                            &fmtid,
+                            &track.name,
+                            || {
+                                let album = core
+                                    .run(Album::get(&session, track.album))
+                                    .expect("Cannot get album metadata");
+                                album.name
+                            },
+                            &artists_strs,
+                            decrypted_buffer,
+                        );
                     }
                 }
             }
@@ -212,25 +198,15 @@ fn main() {
                         AudioDecrypt::new(key, &buffer[..])
                             .read_to_end(&mut decrypted_buffer)
                             .expect("Cannot decrypt stream");
-                        let decrypted_buffer = &decrypted_buffer[0xa7..];
-                        if args.len() == 3 {
-                            if Path::new(&fname).exists() {
-                                info!("File {} already exists.", fname);
-                            } else {
-                                std::fs::write(&fname, decrypted_buffer)
-                                    .expect("Cannot write decrypted episode");
-                                info!("Filename: {}", fname);
-                            }
-                        } else {
-                            run_helper(
-                                &args[3],
-                                &fmtid,
-                                &episode.name,
-                                &show.name,
-                                [show.publisher.as_str()].iter().copied(),
-                                decrypted_buffer,
-                            );
-                        }
+                        let sname = &show.name;
+                        write_to_disk(
+                            &args[..],
+                            &fmtid,
+                            &episode.name,
+                            || sname,
+                            &[show.publisher],
+                            decrypted_buffer,
+                        );
                     }
                 }
             }
