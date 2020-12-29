@@ -91,7 +91,7 @@ fn main() {
                         ids.insert(spotify_id, Episode);
                     }
 
-                    _ => warn!("Unknown link type."),
+                    _ => warn!("Unknown link type: {}", spotify_type),
                 };
             }
 
@@ -101,16 +101,9 @@ fn main() {
 
     for (id, value) in ids {
         let fmtid = id.to_base62();
-        info!(
-            "Getting {} {}...",
-            match value {
-                Track => "track",
-                Episode => "episode",
-            },
-            fmtid
-        );
         match value {
             Track => {
+                info!("Getting track {}...", fmtid);
                 if let Ok(mut track) = core.run(Track::get(&session, id)) {
                     if !track.available {
                         warn!("Track {} is not available, finding alternative...", fmtid);
@@ -161,6 +154,7 @@ fn main() {
             }
 
             Episode => {
+                info!("Getting episode {}...", fmtid);
                 if let Ok(episode) = core.run(Episode::get(&session, id)) {
                     if !episode.available {
                         warn!("Episode {} is not available.", fmtid);
