@@ -7,7 +7,6 @@ use std::{env, panic};
 
 use env_logger::{Builder, Env};
 use indexmap::map::IndexMap;
-use librespot_audio::AudioFile;
 use librespot_core::authentication::Credentials;
 use librespot_core::config::SessionConfig;
 use librespot_core::session::Session;
@@ -139,25 +138,21 @@ fn main() {
                     if Path::new(&fname).exists() {
                         info!("File {} already exists.", fname);
                     } else {
-                        let key = core
-                            .run(session.audio_key().request(track.id, *file_id))
-                            .expect("Cannot get audio key");
-                        let encrypted_file = core
-                            .run(AudioFile::open(&session, *file_id, 320, true))
-                            .unwrap();
                         write_to_disk(
+                            &mut core,
+                            &session,
                             &args[..],
+                            track.id,
+                            *file_id,
                             &fmtid,
                             &track.name,
-                            || {
+                            |core| {
                                 let album = core
                                     .run(Album::get(&session, track.album))
                                     .expect("Cannot get album metadata");
                                 album.name
                             },
                             &artists_strs,
-                            key,
-                            encrypted_file,
                         );
                     }
                 }
@@ -177,21 +172,17 @@ fn main() {
                     if Path::new(&fname).exists() {
                         info!("File {} already exists.", fname);
                     } else {
-                        let key = core
-                            .run(session.audio_key().request(episode.id, *file_id))
-                            .expect("Cannot get audio key");
-                        let encrypted_file = core
-                            .run(AudioFile::open(&session, *file_id, 320, true))
-                            .unwrap();
                         let sname = &show.name;
                         write_to_disk(
+                            &mut core,
+                            &session,
                             &args[..],
+                            episode.id,
+                            *file_id,
                             &fmtid,
                             &episode.name,
-                            || sname,
+                            |_| sname,
                             &[show.publisher],
-                            key,
-                            encrypted_file,
                         );
                     }
                 }

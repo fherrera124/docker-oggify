@@ -1,11 +1,12 @@
 use librespot_audio::{AudioDecrypt, AudioFile};
-use librespot_core::audio_key::AudioKey;
-use librespot_core::spotify_id::FileId;
+use librespot_core::session::Session;
+use librespot_core::spotify_id::{FileId, SpotifyId};
 use librespot_metadata::FileFormat;
 use std::fmt;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
+use tokio_core::reactor::Core;
 
 pub enum IndexedTy {
     Track,
@@ -59,18 +60,26 @@ pub fn run_helper<'a>(
     );
 }
 
-pub fn write_to_disk<'a, GG, GR>(
+pub fn write_to_disk<'a, 'c, GG, GR>(
+    core: &'c mut Core,
+    session: &'c Session,
     args: &'a [String],
+    track_id: SpotifyId,
+    file_id: FileId,
     fmtid: &'a str,
     element: &'a str,
     group_getter: GG,
     origins: &[String],
-    key: AudioKey,
-    mut encrypted_file: AudioFile,
 ) where
-    GG: FnOnce() -> GR,
+    GG: FnOnce(&'c mut Core) -> GR,
     GR: AsRef<str>,
 {
+    let key = core
+        .run(session.audio_key().request(track_id, file_id))
+        .expect("Cannot get audio key");
+    let mut encrypted_file = core
+        .run(AudioFile::open(&session, file_id, 320, true))
+        .unwrap();
     let mut buffer = Vec::new();
     encrypted_file
         .read_to_end(&mut buffer)
@@ -93,7 +102,7 @@ pub fn write_to_disk<'a, GG, GR>(
             &args[3],
             fmtid,
             element,
-            group_getter().as_ref(),
+            group_getter(core).as_ref(),
             origins.iter().map(|i| i.as_str()),
             decrypted_buffer,
         );
