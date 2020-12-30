@@ -95,7 +95,7 @@ fn main() {
                         let show = Rc::new(core.run(Show::get(&session, spotify_id)).unwrap());
                         // Since Spotify returns the IDs of episodes in a show in reverse order,
                         // we have to reverse it ourselves again.
-                        ids.extend(show.episodes.iter().rev().map(|id| {
+                        ids.extend(show.episodes.iter().rev().map(|&id| {
                             (
                                 id,
                                 IndexedTy::Episode {
