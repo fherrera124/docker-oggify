@@ -1,12 +1,12 @@
 #[macro_use]
 extern crate log;
 
+use std::fs::File;
 use std::io::{self, BufRead};
 use std::io::{Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::rc::Rc;
-
 use indexmap::map::IndexMap;
 use librespot_audio::{AudioDecrypt, AudioFile};
 use librespot_core::spotify_id::{FileId, SpotifyId};
@@ -17,7 +17,7 @@ use scoped_threadpool::Pool;
 use tokio_core::reactor::Core;
 
 enum IndexedTy {
-    Track { album_name: Option<Rc<String>> },
+    Track { album: Option<Rc<Album>> },
     Episode { show: Option<Rc<Show>> },
 }
 
@@ -75,17 +75,17 @@ fn main() {
                             .unwrap()
                             .tracks
                             .into_iter()
-                            .map(|id| (id, IndexedTy::Track { album_name: None })),
+                            .map(|id| (id, IndexedTy::Track { album: None })),
                     ),
 
                     "album" => {
-                        let album = core.run(Album::get(&session, spotify_id)).unwrap();
-                        let album_name = Rc::new(album.name);
-                        ids.extend(album.tracks.into_iter().map(|id| {
+                        let album = Rc::new(core.run(Album::get(&session, spotify_id)).unwrap());
+                        //let album_name = Rc::new(album.name);
+                        ids.extend(album.tracks.iter().map(|&id| {
                             (
                                 id,
                                 IndexedTy::Track {
-                                    album_name: Some(album_name.clone()),
+                                    album: Some(album.clone()),
                                 },
                             )
                         }));
@@ -106,7 +106,7 @@ fn main() {
                     }
 
                     "track" => {
-                        ids.insert(spotify_id, IndexedTy::Track { album_name: None });
+                        ids.insert(spotify_id, IndexedTy::Track { album: None });
                     }
 
                     "episode" => {
@@ -124,7 +124,7 @@ fn main() {
     for (id, value) in ids {
         let fmtid = id.to_base62();
         match value {
-            IndexedTy::Track { mut album_name } => {
+            IndexedTy::Track { album } => {
                 info!("Getting track {}...", fmtid);
                 if let Ok(mut track) = core.run(Track::get(&session, id)) {
                     if !track.available {
@@ -147,6 +147,13 @@ fn main() {
                             }
                         };
                     }
+                    let album = album.unwrap_or_else(|| {
+                        Rc::new(
+                            core.run(Album::get(&session, track.album))
+                                .expect("Cannot get album"),
+                        )
+                    });
+                    let cover_id = album.covers.last().unwrap().to_base16();
                     let artists_strs: Vec<_> = track
                         .artists
                         .iter()
@@ -162,20 +169,10 @@ fn main() {
                         &session,
                         &args[..],
                         track.id,
+                        cover_id,
                         &track.files,
-                        &fmtid,
                         &track.name,
-                        |core| {
-                            album_name
-                                .get_or_insert_with(|| {
-                                    Rc::new(
-                                        core.run(Album::get(&session, track.album))
-                                            .expect("Cannot get album metadata")
-                                            .name,
-                                    )
-                                })
-                                .as_str()
-                        },
+                        &album.name,
                         &artists_strs,
                     );
                 }
@@ -193,17 +190,17 @@ fn main() {
                                 .expect("Cannot get show"),
                         )
                     });
-                    let sname = &show.name;
+                    let cover_id = show.covers.last().unwrap().to_base16();
                     handle_entry(
                         &mut core,
                         &mut threadpool,
                         &session,
                         &args[..],
                         episode.id,
+                        cover_id,
                         &episode.files,
-                        &fmtid,
                         &episode.name,
-                        |_| sname,
+                        &show.name,
                         &[show.publisher.clone()],
                     );
                 }
@@ -212,22 +209,20 @@ fn main() {
     }
 }
 
-fn handle_entry<GG, GR>(
+fn handle_entry(
     core: &mut Core,
     threadpool: &mut Pool,
     session: &Session,
     args: &[String],
-    track_id: SpotifyId,
+    entry_id: SpotifyId,
+    cover_id: String,
     files: &Files,
-    fmtid: &str,
-    element: &str,
-    group_getter: GG,
+    entry_name: &str,
+    group_name: &str,
     origins: &[String],
-) where
-    GG: FnOnce(&mut Core) -> GR,
-    GR: AsRef<str>,
-{
-    let fname = sanitize_filename::sanitize(format!("{} - {}.ogg", origins.join(", "), element));
+) {
+    let fmtid = entry_id.to_base62();
+    let fname = sanitize_filename::sanitize(format!("{} - {}.ogg", origins.join(", "), entry_name));
     if Path::new(&fname).exists() {
         info!("File {} already exists.", fname);
         return;
@@ -240,13 +235,17 @@ fn handle_entry<GG, GR>(
             acc
         })
     );
+    let url = format!("https://i.scdn.co/image/{}", cover_id);
+    let mut image_file = reqwest::get(&url).unwrap();
+    let mut file = File::create("cover.jpg").expect("failed to create file");
+    io::copy(&mut image_file, &mut file).expect("failed to copy content");
     let file_id = *files
         .get(&FileFormat::OGG_VORBIS_320)
         .or_else(|| files.get(&FileFormat::OGG_VORBIS_160))
         .or_else(|| files.get(&FileFormat::OGG_VORBIS_96))
         .expect("Could not find a OGG_VORBIS format for the track.");
     let key = core
-        .run(session.audio_key().request(track_id, file_id))
+        .run(session.audio_key().request(entry_id, file_id))
         .expect("Cannot get audio key");
     let mut encrypted_file = core
         .run(AudioFile::open(&session, file_id, 320, true))
@@ -259,8 +258,7 @@ fn handle_entry<GG, GR>(
         let mut read_all = Ok(0);
         threadpool.scoped(|scope| {
             scope.execute(|| {
-                read_all = encrypted_file
-                    .read_to_end(&mut buffer);
+                read_all = encrypted_file.read_to_end(&mut buffer);
                 fetched.store(true, Ordering::Release);
             });
             while !fetched.load(Ordering::Acquire) {
@@ -281,8 +279,8 @@ fn handle_entry<GG, GR>(
         let mut cmd = Command::new(&args[3]);
         cmd.stdin(Stdio::piped());
         cmd.arg(fmtid)
-            .arg(element)
-            .arg(group_getter(core).as_ref())
+            .arg(entry_name)
+            .arg(group_name)
             .args(origins.iter().map(|i| i.as_str()));
         let mut child = cmd.spawn().expect("Could not run helper program");
         let pipe = child.stdin.as_mut().expect("Could not open helper stdin");

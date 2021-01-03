@@ -15,3 +15,4 @@ cat > "${fname}"
 	done
 } | vorbiscomment -a "${fname}"
 echo "${fname}"
+./ogg-cover-art "${fname}"
