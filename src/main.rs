@@ -2,6 +2,7 @@
 extern crate log;
 
 use std::fs::File;
+use std::env;
 use std::io::{self, BufRead};
 use std::io::{Read, Write};
 use std::path::Path;
@@ -221,8 +222,11 @@ fn handle_entry(
     group_name: &str,
     origins: &[String],
 ) {
+    let path = env::var("PATH_DIR").unwrap_or("".to_string());
     let fmtid = entry_id.to_base62();
-    let fname = sanitize_filename::sanitize(format!("{} - {}.ogg", origins.join(", "), entry_name));
+    let mut fname = sanitize_filename::sanitize(format!("{} - {}.ogg", origins.join(", "), entry_name));
+    fname = format!("{}{}", path, fname);
+    info!("Filename: {}", fname);
     if Path::new(&fname).exists() {
         info!("File {} already exists.", fname);
         return;
@@ -237,7 +241,7 @@ fn handle_entry(
     );
     let url = format!("https://i.scdn.co/image/{}", cover_id);
     let mut image_file = reqwest::get(&url).unwrap();
-    let mut file = File::create("cover.jpg").expect("failed to create file");
+    let mut file = File::create(format!("{}cover.jpg", path)).expect("failed to create file");
     io::copy(&mut image_file, &mut file).expect("failed to copy content");
     let file_id = *files
         .get(&FileFormat::OGG_VORBIS_320)

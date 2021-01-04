@@ -1,9 +1,9 @@
-#!/bin/bash
+#!/bin/sh
 
 set -e
 
 fname="${4} - ${2}.ogg"
-fname="${fname//\//-}"
+fname="${PATH_DIR}${fname//\//-}"
 cat > "${fname}"
 {
 	echo "SPOTIFY_ID=${1}"
@@ -15,4 +15,4 @@ cat > "${fname}"
 	done
 } | vorbiscomment -a "${fname}"
 echo "${fname}"
-./ogg-cover-art "${fname}"
+"${PATH_DIR}"ogg-cover-art "${fname}"
