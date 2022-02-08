@@ -12,9 +12,9 @@ readme = "README.md"
 [dependencies]
 env_logger = "0.6"
 indexmap = "1.6"
-librespot-core = { git = "https://github.com/librespot-org/librespot.git", rev="0adb8516a65f551211a9ce78c2d822b85454546c" }
-librespot-metadata = { git = "https://github.com/librespot-org/librespot.git", rev="0adb8516a65f551211a9ce78c2d822b85454546c" }
-librespot-audio = { git = "https://github.com/librespot-org/librespot.git", rev="0adb8516a65f551211a9ce78c2d822b85454546c" }
+librespot-core = { git = "https://github.com/fherrera124/librespot-1.git", branch = "testing" }
+librespot-metadata = { git = "https://github.com/fherrera124/librespot-1.git", branch = "testing" }
+librespot-audio = { git = "https://github.com/fherrera124/librespot-1.git", branch = "testing" }
 linear-map = "1.2"
 log = "0.4.6"
 regex = "1.1"

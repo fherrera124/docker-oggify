@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/ash
 
 set -e
 
@@ -15,4 +15,3 @@ cat > "${fname}"
 	done
 } | vorbiscomment -a "${fname}"
 echo "${fname}"
-"${PATH_DIR}"ogg-cover-art "${fname}"

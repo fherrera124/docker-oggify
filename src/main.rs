@@ -81,7 +81,6 @@ fn main() {
 
                     "album" => {
                         let album = Rc::new(core.run(Album::get(&session, spotify_id)).unwrap());
-                        //let album_name = Rc::new(album.name);
                         ids.extend(album.tracks.iter().map(|&id| {
                             (
                                 id,
@@ -154,7 +153,6 @@ fn main() {
                                 .expect("Cannot get album"),
                         )
                     });
-                    let cover_id = album.covers.last().unwrap().to_base16();
                     let artists_strs: Vec<_> = track
                         .artists
                         .iter()
@@ -170,7 +168,7 @@ fn main() {
                         &session,
                         &args[..],
                         track.id,
-                        cover_id,
+                        &album.covers,
                         &track.files,
                         &track.name,
                         &album.name,
@@ -191,14 +189,13 @@ fn main() {
                                 .expect("Cannot get show"),
                         )
                     });
-                    let cover_id = show.covers.last().unwrap().to_base16();
                     handle_entry(
                         &mut core,
                         &mut threadpool,
                         &session,
                         &args[..],
                         episode.id,
-                        cover_id,
+                        &show.covers,
                         &episode.files,
                         &episode.name,
                         &show.name,
@@ -216,7 +213,7 @@ fn handle_entry(
     session: &Session,
     args: &[String],
     entry_id: SpotifyId,
-    cover_id: String,
+    covers: &Vec<FileId>,
     files: &Files,
     entry_name: &str,
     group_name: &str,
@@ -224,9 +221,9 @@ fn handle_entry(
 ) {
     let path = env::var("PATH_DIR").unwrap_or("".to_string());
     let fmtid = entry_id.to_base62();
+    let cover_id = covers.last().unwrap().to_base16();
     let mut fname = sanitize_filename::sanitize(format!("{} - {}.ogg", origins.join(", "), entry_name));
     fname = format!("{}{}", path, fname);
-    info!("Filename: {}", fname);
     if Path::new(&fname).exists() {
         info!("File {} already exists.", fname);
         return;
@@ -244,9 +241,9 @@ fn handle_entry(
     let mut file = File::create(format!("{}cover.jpg", path)).expect("failed to create file");
     io::copy(&mut image_file, &mut file).expect("failed to copy content");
     let file_id = *files
-        .get(&FileFormat::OGG_VORBIS_320)
-        .or_else(|| files.get(&FileFormat::OGG_VORBIS_160))
-        .or_else(|| files.get(&FileFormat::OGG_VORBIS_96))
+    .get(&FileFormat::OGG_VORBIS_320)
+    .or_else(|| files.get(&FileFormat::OGG_VORBIS_160))
+    .or_else(|| files.get(&FileFormat::OGG_VORBIS_96))
         .expect("Could not find a OGG_VORBIS format for the track.");
     let key = core
         .run(session.audio_key().request(entry_id, file_id))

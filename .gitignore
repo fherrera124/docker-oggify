@@ -1,8 +1,7 @@
 /target
+/tracks
 **/*.rs.bk
 Cargo.lock
-Cargo.lock
-*.jpg
-*.ogg
-tracks_file
-commands.txt
+cover.jpg
+link_list
+download_music.sh
