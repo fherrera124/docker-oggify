@@ -1,20 +1,20 @@
 [package]
-name = "oggify"
+name = "docker-oggify"
 version = "0.1.0"
-authors = ["Lorenzo Pistone <blaffablaffa@gmail.com>"]
-edition = "2018"
+authors = ["Francisco Herrera <okkk@gmail.com>"]
+edition = "2022"
 license = "MIT"
-description = "Download Spotify tracks to Ogg Vorbis format with a Premium account"
+description = "Download Spotify tracks with a Premium account"
 keywords = ["spotify"]
-repository = "https://github.com/pisto/oggify"
+repository = "https://github.com/fherrera124/docker-oggify"
 readme = "README.md"
 
 [dependencies]
 env_logger = "0.6"
 indexmap = "1.6"
-librespot-core = { git = "https://github.com/fherrera124/librespot-1.git", branch = "testing" }
-librespot-metadata = { git = "https://github.com/fherrera124/librespot-1.git", branch = "testing" }
-librespot-audio = { git = "https://github.com/fherrera124/librespot-1.git", branch = "testing" }
+librespot-core = { git = "https://github.com/fherrera124/librespot.git", branch = "testing" }
+librespot-metadata = { git = "https://github.com/fherrera124/librespot.git", branch = "testing" }
+librespot-audio = { git = "https://github.com/fherrera124/librespot.git", branch = "testing" }
 linear-map = "1.2"
 log = "0.4.6"
 regex = "1.1"
