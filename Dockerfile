@@ -29,4 +29,3 @@ COPY --from=cargo-build /usr/src/oggify/target/x86_64-unknown-linux-musl/release
 ENV PATH_DIR=/data/
 
 ENTRYPOINT ["oggify"]
-# docker run --rm -i -v "$(pwd)":/data oggify elganzua124 Curuzucuatia21 < tracks_file
