@@ -4,8 +4,8 @@ set -e
 
 fname="${4} - ${2}.m4a"
 fname="${fname//\//-}"
-#fname="${PATH_DIR}${fname//\//-}"
-fname="${PATH_DIR}tracks/${fname//\//-}"
+fname="${PATH_DIR}${fname//\//-}"
+#fname="${PATH_DIR}tracks/${fname//\//-}"
 spotify_id=${1}
 title=${2//'\n'/' '}
 album=${3//'\n'/' '}

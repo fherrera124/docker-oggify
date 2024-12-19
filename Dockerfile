@@ -1,31 +1,26 @@
-FROM clux/muslrust as cargo-build
+# Using the `rust-musl-builder` as base image, instead of 
+# the official Rust toolchain
+FROM clux/muslrust:stable AS chef
+USER root
+RUN cargo install cargo-chef
+WORKDIR /app
 
-RUN rustup target add x86_64-unknown-linux-musl
+FROM chef AS planner
+COPY ./Cargo.toml ./
+COPY ./src ./src
+RUN cargo chef prepare --recipe-path recipe.json
 
-WORKDIR /usr/src/oggify
-
-COPY Cargo.toml Cargo.toml
-
-RUN mkdir src/
-
-RUN echo "fn main() {println!(\"if you see this, the build broke\")}" > src/main.rs
-
-RUN RUSTFLAGS=-Clinker=musl-gcc cargo build --release --target=x86_64-unknown-linux-musl
-
-RUN rm -f target/x86_64-unknown-linux-musl/release/deps/oggify*
-
+FROM chef AS builder 
+COPY --from=planner /app/recipe.json recipe.json
+# Notice that we are specifying the --target flag!
+RUN cargo chef cook --release --target x86_64-unknown-linux-musl --recipe-path recipe.json
 COPY . .
+RUN cargo build --release --target x86_64-unknown-linux-musl --bin oggify
 
-RUN RUSTFLAGS=-Clinker=musl-gcc cargo build --release --target=x86_64-unknown-linux-musl
-
-FROM alfg/ffmpeg:latest
+FROM alfg/ffmpeg:latest AS runtime
 
 RUN apk update
-
 RUN apk add --no-cache vorbis-tools xxd coreutils
-
-COPY --from=cargo-build /usr/src/oggify/target/x86_64-unknown-linux-musl/release/oggify /usr/local/bin/oggify
-
+COPY --from=builder /app/target/x86_64-unknown-linux-musl/release/oggify /usr/local/bin/app
 ENV PATH_DIR=/data/
-
-ENTRYPOINT ["oggify"]
+ENTRYPOINT ["/usr/local/bin/app"]
