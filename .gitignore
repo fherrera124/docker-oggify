@@ -1,7 +1,2 @@
-/target
 /tracks
-**/*.rs.bk
-Cargo.lock
-cover.jpg
-link_list
-download_music.sh
+/.cache

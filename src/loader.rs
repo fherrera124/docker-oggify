@@ -144,14 +144,16 @@ impl TrackLoader {
         // Not all audio files are encrypted. If we can't get a key, try loading the track
         // without decryption. If the file was encrypted after all, the decoder will fail
         // parsing and bail out, so we should be safe from outputting ear-piercing noise.
+        // update: all audio files are assumed to be encrypted 
         let key = match self.session.audio_key().request(spotify_id, file_id).await {
             Ok(key) => Some(key),
             Err(e) => {
-                warn!("Unable to load key, continuing without decryption: {}", e);
-                None
+                //warn!("Unable to load key, continuing without decryption: {}", e);
+                //None
+                error!("Unable to load key, aborting: {}", e);
+                return None;
             }
         };
-        //let mut decrypted_file = AudioDecrypt::new(key, encrypted_file);
 
         //let is_ogg_vorbis = AudioFiles::is_ogg_vorbis(format);
             

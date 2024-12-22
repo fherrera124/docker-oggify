@@ -3,13 +3,15 @@ extern crate log;
 
 mod loader;
 
+use loader::TrackLoader;
+
 use std::{
     process::{Command, Stdio, exit},
-    fs::File,
+    fs::{create_dir_all},
     env,
-    io::{self, BufRead, Read, Write},
+    io::{self, BufRead, Write},
     collections::HashSet,
-    path::Path
+    path::{Path, PathBuf}
 };
 use librespot_oauth::get_access_token;
 use librespot_core::{
@@ -23,8 +25,9 @@ use librespot_metadata::{
     Album,
     Metadata,
     Playlist,
-    audio::{UniqueFields, AudioItem}
+    audio::UniqueFields
 };
+use tokio::time::{sleep, Duration};
 use regex::Regex;
 
 
@@ -45,12 +48,6 @@ async fn main() {
         "access-token",
         "Spotify access token to sign in with.",
         "TOKEN",
-    )
-    .optopt(
-        "s",
-        "helper-script",
-        "helper script to convert track.",
-        "SCRIPT",
     );
 
     let args: Vec<_> = env::args().collect();
@@ -77,11 +74,7 @@ async fn main() {
 
     let session_config = SessionConfig::default();
 
-    let mut audio_dir = std::env::var("PATH_DIR").unwrap_or_else(|_| "".to_string());
-    let creds_dir = format!("{}/creds", audio_dir.trim_end_matches('/'));
-    audio_dir = format!("{}/cache", audio_dir.trim_end_matches('/'));
-
-    let cache = match Cache::new(Some(creds_dir), None, Some(audio_dir), None) {
+    let cache = match Cache::new(Some("/data/.cache"), None, Some("/data/.cache"), None) {
         Ok(cache) => Some(cache),
         Err(e) => {
             warn!("Cannot create cache: {}", e);
@@ -132,18 +125,11 @@ async fn main() {
         }
     };
 
-    let script_option = opt_str("helper-script"); // Guardar el Option<String>
-
-    let helper_script = script_option
-        .as_deref()
-        .and_then(|script| {
-            if script.is_empty() {
-                empty_string_error_msg("helper-script", "s");
-                None
-            } else {
-                Some(script)
-            }
-    });
+    let output_path = PathBuf::from("/data/tracks");
+    if let Err(e) = create_dir_all(&output_path) {
+        error!("could not create or access the directory: {}", e);
+        exit(1);
+    }
 
     let session = Session::new(session_config, cache);
 
@@ -151,7 +137,6 @@ async fn main() {
         println!("Error connecting: {}", e);
         exit(1);
     }
-
 
     info!("Connected!");
 
@@ -199,9 +184,18 @@ async fn main() {
             Err(e) => warn!("ERROR: {}", e),
         }
     }
-
-    for id in ids {
-        download_track(&session, id, helper_script).await;
+    
+    let loader = TrackLoader {
+        session: session.clone(),
+    };
+    for spotify_id in ids {
+        if let Err(e) = process_audio_item(&loader, spotify_id, &output_path).await {
+            warn!("Error processing audio item: {}", e);
+            // TODO: add item failed to file of items failed
+            continue;
+        }
+        // to avoid service unavailable...
+        sleep(Duration::from_secs(10)).await;
     }
 }
 
@@ -210,122 +204,21 @@ fn usage(program: &str, opts: &getopts::Options) -> String {
     opts.usage(&brief)
 }
 
-async fn download_track(
-    session: &Session,
-    spotify_id: SpotifyId,
-    helper_script: Option<&str>,
-) {
-
-    let loader = loader::TrackLoader {
-        session: session.clone(),
-    };
-
-    let (audio_item, audio_buffer) = match loader.load_track(spotify_id).await {
-        Some(track_data) => (track_data.audio_item, track_data.audio_buffer),
-        None => {
-            warn!(
-                "<{}> is not available",
-                spotify_id.to_uri().unwrap_or_default()
-            );
-            return;
-        }
-    };
-
-    let (origins, group_name) = match audio_item.unique_fields {
-        UniqueFields::Track {
-            artists,
-            album,
-            album_artists, ..
-        } => {
-                (artists
-                    .0
-                    .into_iter()
-                    .map(|a| a.name)
-                    .collect::<Vec<String>>(),
-                album)
-        },
-        _ => (Vec::new(), "test".to_string())
-    };
-
-    let path = env::var("PATH_DIR").unwrap_or("".to_string());
-    let mut fname = sanitize_filename::sanitize(format!("{} - {}.ogg", origins.join(", "), audio_item.name));
-    fname = format!("{}{}", path, fname);
-    if Path::new(&fname).exists() {
-        info!("File {} already exists.", fname);
-        return;
-    }
-
-    if let Some(script) = helper_script {
-        let cover = audio_item.covers.first().unwrap();
-
-        let response = match reqwest::get(&cover.url).await {
-            Ok(response) => response.bytes(),
-            Err(e) => {
-                eprintln!("Error al obtener datos: {}", e);
-                return;
-            }
-        };
-        let image_file = match response.await {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                eprintln!("Error al obtener los bytes de la respuesta: {}", e);
-                return;
-            }
-        };
-
-        let mut file = File::create(format!("{}cover.jpg", path)).expect("failed to create file");
-        io::copy(&mut image_file.as_ref(), &mut file).expect("failed to copy content");
-
-        let mut cmd = Command::new(script);
-        cmd.stdin(Stdio::piped());
-        let track_id = match audio_item.track_id.to_base62() {
-            Ok(id) => id,
-            Err(e) => {
-                eprintln!("Error al convertir track_id a base62: {}", e);
-                return;
-            }
-        };
-        cmd.arg(track_id)
-            .arg(audio_item.name)
-            .arg(group_name)
-            .args(origins);
-        let mut child = cmd.spawn().expect("Could not run helper program");
-        let pipe = child.stdin.as_mut().expect("Could not open helper stdin");
-        pipe.write_all(&audio_buffer)
-            .expect("Failed to write to stdin");
-        assert!(
-            child
-                .wait()
-                .expect("Out of ideas for error messages")
-                .success(),
-            "Helper script returned an error"
-        );
-    } else {
-        std::fs::write(&fname, audio_buffer).expect("Cannot write decrypted audio stream");
-    }
-
-    info!("Filename: {}", fname);
-}
-
-async fn download_cover(url: &str, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let response = reqwest::get(url).await?.bytes().await?;
-    let mut file = File::create(path)?;
-    io::copy(&mut response.as_ref(), &mut file)?;
-    Ok(())
-}
-
 fn run_helper_script(
-    script: &str,
     track_id: &str,
-    name: &str,
+    cover_url: &str,
+    full_path_str: &str,
+    track_title: &str,
     group_name: &str,
-    origins: &[String],
-    audio_buffer: &[u8],
+    origins: Vec<&str>,
+    audio_buffer: &[u8]
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut cmd = Command::new(script);
+    let mut cmd = Command::new("tag_ogg.sh");
     cmd.arg(track_id)
-        .arg(name)
+        .arg(track_title)
         .arg(group_name)
+        .arg(full_path_str)
+        .arg(cover_url)
         .args(origins)
         .stdin(Stdio::piped());
 
@@ -340,37 +233,56 @@ fn run_helper_script(
 }
 
 async fn process_audio_item(
-    helper_script: Option<&str>,
-    audio_item: AudioItem,
-    group_name: &str,
-    origins: &[String],
-    audio_buffer: &[u8],
-    path: &Path,
+    loader: &TrackLoader,
+    spotify_id: SpotifyId,
+    tracks_path: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(script) = helper_script {
-        let cover = audio_item
-            .covers
-            .first()
-            .ok_or("No covers available for this audio item")?;
-        let cover_path = path.join("cover.jpg");
 
-        // Descargar la portada
-        download_cover(&cover.url, &cover_path).await?;
+    let (audio_item, audio_buffer) = match loader.load_track(spotify_id).await {
+        Some(track_data) => (track_data.audio_item, track_data.audio_buffer),
+        None => {
+            return Err(format!("<{}> is not available", spotify_id.to_uri().unwrap_or_default()).into());
+        }
+    };
 
-        // Convertir el track_id
-        let track_id = audio_item.track_id.to_base62()?;
+    let (origins, group_name) = match &audio_item.unique_fields {
+        UniqueFields::Track {
+            artists,
+            album,
+            album_artists, ..
+        } => {
+            (artists
+                .0
+                .iter()
+                .map(|a| a.name.as_str())
+                .collect::<Vec<&str>>(),
+                album.to_string())
+            },
+            _ => (Vec::new(), "test".to_string())
+        };
 
-        // Ejecutar el script auxiliar
-        run_helper_script(
-            script,
-            &track_id,
-            &audio_item.name,
-            group_name,
-            origins,
-            audio_buffer,
-        )?;
+    let cover = audio_item
+        .covers
+        .first()
+        .ok_or("No covers available for this audio item")?;
+
+    let track_id = audio_item.track_id.to_base62()?;
+    let fname = sanitize_filename::sanitize(format!("{} - {}", audio_item.name, origins.join(", ")));
+
+    let full_path = tracks_path.join(format!("{}.ogg", &fname));
+    if full_path.exists() {
+        info!("File '{}' already exists.", full_path.to_str().unwrap());
+        return Ok(());
     }
+
+    run_helper_script(
+        &track_id,
+        &cover.url,
+        full_path.to_str().unwrap(),
+        &audio_item.name,
+        &group_name,
+        origins,
+        &audio_buffer
+    )?;
     Ok(())
 }
-
-
