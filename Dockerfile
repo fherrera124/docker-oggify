@@ -14,7 +14,7 @@ RUN cargo chef cook --release --target x86_64-unknown-linux-musl --recipe-path r
 COPY . .
 RUN cargo build --release --target x86_64-unknown-linux-musl --bin oggify
 
-FROM alfg/ffmpeg:latest AS runtime
+FROM alpine:3.21.0 AS runtime
 RUN apk update
 RUN apk add --no-cache vorbis-tools xxd coreutils
 COPY --from=builder /app/target/x86_64-unknown-linux-musl/release/oggify /usr/local/bin/
