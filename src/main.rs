@@ -7,11 +7,11 @@ use loader::TrackLoader;
 
 use std::{
     process::{Command, Stdio, exit},
-    fs::{create_dir_all},
+    fs::{read_dir, remove_dir, create_dir_all},
     env,
     io::{self, BufRead, Write},
-    collections::HashSet,
-    path::{Path, PathBuf}
+    path::PathBuf,
+    collections::{HashMap, HashSet}
 };
 use librespot_oauth::get_access_token;
 use librespot_core::{
@@ -125,23 +125,17 @@ async fn main() {
         }
     };
 
-    let output_path = PathBuf::from("/data/tracks");
-    if let Err(e) = create_dir_all(&output_path) {
-        error!("could not create or access the directory: {}", e);
-        exit(1);
-    }
-
     let session = Session::new(session_config, cache);
-
+    
     if let Err(e) = session.connect(credentials.clone().unwrap_or_default(), true).await {
         println!("Error connecting: {}", e);
         exit(1);
     }
-
+    
     info!("Connected!");
-
+    
     let re = Regex::new(r"(playlist|track|album)[/:]([a-zA-Z0-9]+)").unwrap();
-    let mut ids = HashSet::new();
+    let mut ids: HashMap<String, HashSet<SpotifyId>> = HashMap::new();
 
     for line in io::stdin().lock().lines() {
         match line {
@@ -160,23 +154,29 @@ async fn main() {
                 spotify_id.item_type = SpotifyItemType::from(item_type_str);
 
                 match spotify_id.item_type {
-                    SpotifyItemType::Playlist => ids.extend(
-                        Playlist::get(&session, &spotify_id)
-                            .await
-                            .unwrap()
-                            .tracks()
-                            .cloned(),
-                    ),
-                    SpotifyItemType::Album => ids.extend(
-                        Album::get(&session, &spotify_id)
-                            .await
-                            .unwrap()
-                            .tracks()
-                            .cloned(),
-                    ),
+                    SpotifyItemType::Playlist => {
+                        let playlist = Playlist::get(&session, &spotify_id).await.unwrap();
+                        let sanitized_name = sanitize_filename::sanitize(playlist.name());
+                        let path = format!("playlists/{}", sanitized_name);
+                        ids
+                            .entry(path.to_string())
+                            .or_insert_with(HashSet::new)
+                            .extend(playlist.tracks());
+                    },
+                    SpotifyItemType::Album => {
+                        let album = Album::get(&session, &spotify_id).await.unwrap();
+                        let sanitized_name = sanitize_filename::sanitize(&album.name);
+                        let path = format!("albums/{}", sanitized_name);
+                        ids
+                            .entry(path.to_string())
+                            .or_insert_with(HashSet::new)
+                            .extend(album.tracks());
+                    },
                     SpotifyItemType::Track => {
-                        spotify_id.item_type = SpotifyItemType::Track;
-                        ids.insert(spotify_id);
+                        ids
+                            .entry("tracks".to_string())
+                            .or_insert_with(HashSet::new)
+                            .insert(spotify_id);
                     },
                     _ => warn!("Unknown/unsuported item type: {}", item_type_str),
                 };
@@ -184,19 +184,36 @@ async fn main() {
             Err(e) => warn!("ERROR: {}", e),
         }
     }
-    
+
+    let base_path = PathBuf::from("/data");
+
     let loader = TrackLoader {
         session: session.clone(),
     };
-    for spotify_id in ids {
-        if let Err(e) = process_audio_item(&loader, spotify_id, &output_path).await {
-            warn!("Error processing audio item: {}", e);
-            // TODO: add item failed to file of items failed
+
+    for (path, spotify_ids) in ids {
+        let output_path = base_path.join(path);
+        if let Err(e) = create_dir_all(&output_path) {
+            error!("could not create or access the directory '{}': {}", output_path.display(), e);
             continue;
         }
-        // to avoid service unavailable...
-        sleep(Duration::from_secs(10)).await;
+        for spotify_id in spotify_ids {
+            if let Err(e) = process_audio_item(&loader, spotify_id, &output_path).await {
+                error!("Error processing audio item: {}", e);
+                if let Ok(entries) = read_dir(&output_path) {
+                    if entries.count() == 0 {
+                        if let Err(e) = remove_dir(&output_path) {
+                            warn!("Failed to remove empty directory '{}': {}", output_path.display(), e);
+                        }
+                    }
+                }
+                // TODO: print failed items
+            }
+            // Adding a brief delay to mitigate potential service timeouts from Spotify
+            sleep(Duration::from_secs(10)).await;
+        }
     }
+
 }
 
 fn usage(program: &str, opts: &getopts::Options) -> String {
@@ -235,9 +252,10 @@ fn run_helper_script(
 async fn process_audio_item(
     loader: &TrackLoader,
     spotify_id: SpotifyId,
-    tracks_path: &Path,
+    output_path: &PathBuf,
 ) -> Result<(), Box<dyn std::error::Error>> {
 
+    // TODO: evaluate if is_ogg_vorbis or mp3
     let (audio_item, audio_buffer) = match loader.load_track(spotify_id).await {
         Some(track_data) => (track_data.audio_item, track_data.audio_buffer),
         None => {
@@ -248,8 +266,7 @@ async fn process_audio_item(
     let (origins, group_name) = match &audio_item.unique_fields {
         UniqueFields::Track {
             artists,
-            album,
-            album_artists, ..
+            album, ..
         } => {
             (artists
                 .0
@@ -269,7 +286,7 @@ async fn process_audio_item(
     let track_id = audio_item.track_id.to_base62()?;
     let fname = sanitize_filename::sanitize(format!("{} - {}", audio_item.name, origins.join(", ")));
 
-    let full_path = tracks_path.join(format!("{}.ogg", &fname));
+    let full_path = output_path.join(format!("{}.ogg", &fname));
     if full_path.exists() {
         info!("File '{}' already exists.", full_path.to_str().unwrap());
         return Ok(());
