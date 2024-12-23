@@ -4,7 +4,8 @@ use std::{
 use librespot_audio::{AudioDecrypt, AudioFile};
 use librespot_core::{
     spotify_id::SpotifyId,
-    session::Session
+    session::Session,
+    Error
 };
 use librespot_metadata::{
     audio::{AudioFileFormat, AudioItem}
@@ -77,7 +78,7 @@ impl TrackLoader {
     pub async fn load_track(
         &self,
         spotify_id: SpotifyId,
-    ) -> Option<LoadedTrackData> {
+    ) -> Result<LoadedTrackData, Error> {
         let audio_item = match AudioItem::get_file(&self.session, spotify_id).await {
             Ok(audio) => match self.find_available_alternative(audio).await {
                 Some(audio) => audio,
@@ -86,19 +87,14 @@ impl TrackLoader {
                         "<{}> is not available",
                         spotify_id.to_uri().unwrap_or_default()
                     );
-                    return None;
+                    return Err(Error::unavailable("Item is not available"));
                 }
             },
             Err(e) => {
                 error!("Unable to load audio item: {:?}", e);
-                return None;
+                return Err(e);
             }
         };
-
-        info!(
-            "Loading <{}> with Spotify URI <{}>",
-            audio_item.name, audio_item.uri
-        );
 
         let formats = [
             AudioFileFormat::OGG_VORBIS_320,
@@ -123,11 +119,17 @@ impl TrackLoader {
                         "<{}> is not available in any supported format",
                         audio_item.name
                     );
-                    return None;
+                    return Err(Error::unavailable("Item is not available in any supported format"));
                 }
             };
 
-        let bytes_per_second = self.stream_data_rate(format)?;
+        let bytes_per_second = match self.stream_data_rate(format) {
+            Some(rate) => rate,
+            None => {
+                error!("Failed to get stream data rate: format not supported");
+                return Err(Error::unavailable("Stream data rate not available"));
+            }
+        };
 
         let encrypted_file = AudioFile::open(&self.session, file_id, bytes_per_second);
 
@@ -135,7 +137,7 @@ impl TrackLoader {
             Ok(encrypted_file) => encrypted_file,
             Err(e) => {
                 error!("Unable to load encrypted file: {:?}", e);
-                return None;
+                return Err(e);
             }
         };
 
@@ -151,7 +153,7 @@ impl TrackLoader {
                 //warn!("Unable to load key, continuing without decryption: {}", e);
                 //None
                 error!("Unable to load key, aborting: {}", e);
-                return None;
+                return Err(e);
             }
         };
 
@@ -172,9 +174,12 @@ impl TrackLoader {
         // otherwise expect in Vorbis comments. This packet isn't well-formed and players may balk at it.
         let decrypted_buffer = &decrypted_buffer[0xa7..];
 
-        info!("<{}> loaded", audio_item.name);
+        info!(
+            "Loaded <{}> with Spotify URI <{}>",
+            audio_item.name, audio_item.uri
+        );
 
-        return Some(LoadedTrackData {
+        return Ok(LoadedTrackData {
             audio_item,
             audio_buffer: decrypted_buffer.to_vec(),
         });

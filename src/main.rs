@@ -19,7 +19,9 @@ use librespot_core::{
     spotify_id::{SpotifyId, SpotifyItemType},
     authentication::Credentials,
     config::SessionConfig,
-    session::Session
+    session::Session,
+    audio_key::AudioKeyError,
+    Error
 };
 use librespot_metadata::{
     Album,
@@ -191,6 +193,8 @@ async fn main() {
         session: session.clone(),
     };
 
+    let mut penalty_delay = Duration::from_secs(0);
+
     for (path, spotify_ids) in ids {
         let output_path = base_path.join(path);
         if let Err(e) = create_dir_all(&output_path) {
@@ -198,18 +202,39 @@ async fn main() {
             continue;
         }
         for spotify_id in spotify_ids {
-            if let Err(e) = process_audio_item(&loader, spotify_id, &output_path).await {
-                error!("Error processing audio item: {}", e);
-                if let Ok(entries) = read_dir(&output_path) {
-                    if entries.count() == 0 {
-                        if let Err(e) = remove_dir(&output_path) {
-                            warn!("Failed to remove empty directory '{}': {}", output_path.display(), e);
+            loop {
+                match process_audio_item(&loader, spotify_id, &output_path).await {
+                    Ok(_) => {
+                        penalty_delay = Duration::from_secs(0);
+                        break;
+                    }
+                    Err(e) => {
+                        match e.error.downcast_ref::<AudioKeyError>() {
+                            Some(AudioKeyError::AesKey) => {
+                                penalty_delay += Duration::from_secs(60);
+                                error!("Error: Audio key response timeout. Adding delay and retrying...");
+                                if penalty_delay > Duration::from_secs(300) {
+                                    error!("Penalty delay exceeded 5 minutes, exiting.");
+                                    exit(1);
+                                }
+                                sleep(penalty_delay).await;
+                            }
+                            _ => {
+                                error!("Error: {:?}", e);
+                                // TODO: add to list of failed items
+                                if let Ok(entries) = read_dir(&output_path) {
+                                    if entries.count() == 0 {
+                                        if let Err(e) = remove_dir(&output_path) {
+                                            warn!("Failed to remove empty directory '{}': {}", output_path.display(), e);
+                                        }
+                                    }
+                                }
+                                break;
+                            }
                         }
                     }
                 }
-                // TODO: print failed items
             }
-            // Adding a brief delay to mitigate potential service timeouts from Spotify
             sleep(Duration::from_secs(10)).await;
         }
     }
@@ -229,7 +254,7 @@ fn run_helper_script(
     group_name: &str,
     origins: Vec<&str>,
     audio_buffer: &[u8]
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Error> {
     let mut cmd = Command::new("tag_ogg.sh");
     cmd.arg(track_id)
         .arg(track_title)
@@ -240,11 +265,12 @@ fn run_helper_script(
         .stdin(Stdio::piped());
 
     let mut child = cmd.spawn()?;
-    let pipe = child.stdin.as_mut().ok_or("Failed to open helper stdin")?;
+    let pipe = child.stdin.as_mut()
+        .ok_or_else(|| Error::internal("Failed to open helper stdin"))?;
     pipe.write_all(audio_buffer)?;
     let status = child.wait()?;
     if !status.success() {
-        return Err("Helper script returned an error".into());
+        return Err(Error::internal("Helper script returned an error"));
     }
     Ok(())
 }
@@ -253,13 +279,13 @@ async fn process_audio_item(
     loader: &TrackLoader,
     spotify_id: SpotifyId,
     output_path: &PathBuf,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Error> {
 
     // TODO: evaluate if is_ogg_vorbis or mp3
     let (audio_item, audio_buffer) = match loader.load_track(spotify_id).await {
-        Some(track_data) => (track_data.audio_item, track_data.audio_buffer),
-        None => {
-            return Err(format!("<{}> is not available", spotify_id.to_uri().unwrap_or_default()).into());
+        Ok(track_data) => (track_data.audio_item, track_data.audio_buffer),
+        Err(e) => {
+            return Err(e);
         }
     };
 
@@ -281,14 +307,14 @@ async fn process_audio_item(
     let cover = audio_item
         .covers
         .first()
-        .ok_or("No covers available for this audio item")?;
+        .ok_or_else(|| Error::not_found("No covers available for this audio item"))?;
 
     let track_id = audio_item.track_id.to_base62()?;
     let fname = sanitize_filename::sanitize(format!("{} - {}", audio_item.name, origins.join(", ")));
 
     let full_path = output_path.join(format!("{}.ogg", &fname));
     if full_path.exists() {
-        info!("File '{}' already exists.", full_path.to_str().unwrap());
+        warn!("File '{}' already exists.", full_path.to_str().unwrap());
         return Ok(());
     }
 
